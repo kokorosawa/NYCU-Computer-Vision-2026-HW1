@@ -15,6 +15,7 @@ class Trainer:
         val_dataloader=None,
         test_dataloader=None,
         device="cuda",
+        class_names=None,
     ):
         if device == "cuda" and not torch.cuda.is_available():
             device = "cpu"
@@ -31,6 +32,7 @@ class Trainer:
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
         self.best_val_acc = None
         self.best_epoch = 0
+        self.class_names = class_names
 
     def train_step(self):
         self.model.train()
@@ -139,7 +141,13 @@ class Trainer:
                     dtype=torch.float16,
                 ):
                     outputs = self.model(images)
-                preds = torch.argmax(outputs, dim=1).cpu().tolist()
+
+                pred_indices = torch.argmax(outputs, dim=1).cpu().tolist()
+                preds = (
+                    [int(self.class_names[idx]) for idx in pred_indices]
+                    if self.class_names is not None
+                    else pred_indices
+                )
 
                 for filename, pred in zip(filenames, preds):
                     image_name = os.path.splitext(os.path.basename(filename))[0]

@@ -114,14 +114,13 @@ def set_seed(seed):
 def build_train_transform(image_size):
     return transforms.Compose(
         [
-            transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)),
+            transforms.RandomResizedCrop(image_size, scale=(0.75, 1.0)),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),
+            transforms.RandomAffine(
+                degrees=10, translate=(0.05, 0.05), scale=(0.95, 1.05)
+            ),
             transforms.ColorJitter(
-                brightness=0.2,
-                contrast=0.2,
-                saturation=0.2,
-                hue=0.02,
+                brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02
             ),
             transforms.ToTensor(),
             transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
@@ -162,10 +161,10 @@ def load_checkpoint(path, device):
 
 def train(args, model_path):
     model = Resnet(num_classes=100, model_name=args.model, freeze=args.freeze_backbone)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs
+    optimizer = torch.optim.AdamW(
+        model.parameter_groups(args.lr), weight_decay=1e-4
     )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=0.1)
 
     train_dataset = ImageFolder(
@@ -208,6 +207,7 @@ def train(args, model_path):
 def test(args, model_path):
     model = Resnet(num_classes=100, model_name=args.model)
     model.load_state_dict(load_checkpoint(model_path, args.device))
+    train_dataset = ImageFolder(args.data_dir / "train")
     test_dataset = TestDataset(
         root=args.data_dir / "test", transform=build_eval_transform(args.image_size)
     )
@@ -218,7 +218,14 @@ def test(args, model_path):
         shuffle=False,
         device=args.device,
     )
-    trainer = Trainer(model, None, None, test_dataloader=test_dataloader, device=args.device)
+    trainer = Trainer(
+        model,
+        None,
+        None,
+        test_dataloader=test_dataloader,
+        device=args.device,
+        class_names=train_dataset.classes,
+    )
     trainer.test(test_dataloader, output_path=args.output_path)
 
 
