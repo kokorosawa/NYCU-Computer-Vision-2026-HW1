@@ -292,7 +292,9 @@ def build_train_transform(image_size):
         transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomAffine(degrees=12, translate=(0.08, 0.08), scale=(0.9, 1.1)),
-        transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.03),
+        transforms.ColorJitter(
+            brightness=0.25, contrast=0.25, saturation=0.25, hue=0.03
+        ),
     ]
     return transforms.Compose(
         transform_list
@@ -310,10 +312,14 @@ def build_train_transform_with_randaugment(image_size, randaugment_magnitude):
         transforms.RandomHorizontalFlip(),
     ]
     if randaugment_magnitude >= 0:
-        transform_list.append(transforms.RandAugment(num_ops=2, magnitude=randaugment_magnitude))
+        transform_list.append(
+            transforms.RandAugment(num_ops=2, magnitude=randaugment_magnitude)
+        )
     transform_list.extend(
         [
-            transforms.RandomAffine(degrees=12, translate=(0.08, 0.08), scale=(0.9, 1.1)),
+            transforms.RandomAffine(
+                degrees=12, translate=(0.08, 0.08), scale=(0.9, 1.1)
+            ),
             transforms.ToTensor(),
             transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
             transforms.RandomErasing(p=0.25, scale=(0.02, 0.12)),
@@ -382,14 +388,18 @@ def normalize_ensemble_members(model_names, model_paths):
     if not model_paths:
         return []
     if not model_names:
-        raise ValueError("ensemble-models must be provided when ensemble-model-paths are specified.")
+        raise ValueError(
+            "ensemble-models must be provided when ensemble-model-paths are specified."
+        )
 
     normalized_model_names = list(model_names)
     normalized_model_paths = list(model_paths)
     if len(normalized_model_names) == 1 and len(normalized_model_paths) > 1:
         normalized_model_names *= len(normalized_model_paths)
     if len(normalized_model_names) != len(normalized_model_paths):
-        raise ValueError("ensemble-models and ensemble-model-paths must have equal length.")
+        raise ValueError(
+            "ensemble-models and ensemble-model-paths must have equal length."
+        )
     return list(zip(normalized_model_names, normalized_model_paths))
 
 
@@ -406,7 +416,11 @@ def infer_image_size_from_state_dict(state_dict, model_name, default_image_size)
         return default_image_size
 
     proj_weight = state_dict.get("gmlp_blocks.0.sgu.proj.weight")
-    if proj_weight is None or proj_weight.ndim != 2 or proj_weight.shape[0] != proj_weight.shape[1]:
+    if (
+        proj_weight is None
+        or proj_weight.ndim != 2
+        or proj_weight.shape[0] != proj_weight.shape[1]
+    ):
         return default_image_size
 
     seq_len = proj_weight.shape[0]
@@ -418,7 +432,9 @@ def infer_image_size_from_state_dict(state_dict, model_name, default_image_size)
 
 def discover_ensemble_candidates(args):
     if args.ensemble_model_paths:
-        return normalize_ensemble_members(args.ensemble_models, args.ensemble_model_paths)
+        return normalize_ensemble_members(
+            args.ensemble_models, args.ensemble_model_paths
+        )
 
     pattern = args.ensemble_candidate_glob
     candidate_paths = [Path(path).resolve() for path in glob.glob(pattern)]
@@ -433,9 +449,13 @@ def discover_ensemble_candidates(args):
         if len(model_names) == 1:
             model_names *= len(candidate_paths)
         elif len(model_names) != len(candidate_paths):
-            raise ValueError("When using ensemble-candidate-glob, ensemble-models must be length 1 or match the number of discovered checkpoints.")
+            raise ValueError(
+                "When using ensemble-candidate-glob, ensemble-models must be length 1 or match the number of discovered checkpoints."
+            )
     else:
-        model_names = [infer_model_name_from_path(path, args.model) for path in candidate_paths]
+        model_names = [
+            infer_model_name_from_path(path, args.model) for path in candidate_paths
+        ]
     return list(zip(model_names, candidate_paths))
 
 
@@ -447,7 +467,9 @@ def resolve_ensemble_member_specs(args):
             raise FileNotFoundError(f"Ensemble checkpoint not found: {resolved_path}")
         state_dict = load_checkpoint(resolved_path, args.device)
         state_dict = remap_checkpoint_keys(state_dict, model_name)
-        image_size = infer_image_size_from_state_dict(state_dict, model_name, args.image_size)
+        image_size = infer_image_size_from_state_dict(
+            state_dict, model_name, args.image_size
+        )
         member_specs.append(
             {
                 "model_name": model_name,
@@ -499,7 +521,9 @@ def select_top_ensemble_members(args, train_dataset):
         logits, labels = trainer.predict_labeled_logits(val_dataloader)
         val_loss = torch.nn.functional.cross_entropy(logits, labels).item()
         val_acc = (logits.argmax(dim=1) == labels).float().mean().item()
-        scored_members.append((val_acc, val_loss, model_name, resolved_path, image_size))
+        scored_members.append(
+            (val_acc, val_loss, model_name, resolved_path, image_size)
+        )
         print(
             f"Validated ensemble candidate: {model_name} from {resolved_path} "
             f"| image_size={image_size}, val_acc={val_acc:.4%}, val_loss={val_loss:.4f}"
@@ -516,7 +540,9 @@ def select_top_ensemble_members(args, train_dataset):
         for _, _, model_name, model_path, image_size in scored_members[:top_k]
     ]
     print("Selected ensemble members:")
-    for rank, (val_acc, val_loss, model_name, model_path, image_size) in enumerate(scored_members[:top_k], start=1):
+    for rank, (val_acc, val_loss, model_name, model_path, image_size) in enumerate(
+        scored_members[:top_k], start=1
+    ):
         print(
             f"  Top {rank}: {model_name} from {model_path} "
             f"| image_size={image_size}, val_acc={val_acc:.4%}, val_loss={val_loss:.4f}"
@@ -527,7 +553,9 @@ def select_top_ensemble_members(args, train_dataset):
 def build_scheduler(optimizer, epochs, warmup_ratio, eta_min):
     warmup_epochs = min(epochs - 1, max(0, math.ceil(epochs * warmup_ratio)))
     if warmup_epochs == 0:
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs), eta_min=eta_min)
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, epochs), eta_min=eta_min
+        )
 
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer,
@@ -535,7 +563,9 @@ def build_scheduler(optimizer, epochs, warmup_ratio, eta_min):
         end_factor=1.0,
         total_iters=warmup_epochs,
     )
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs - warmup_epochs), eta_min=eta_min)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, epochs - warmup_epochs), eta_min=eta_min
+    )
     return torch.optim.lr_scheduler.SequentialLR(
         optimizer,
         schedulers=[warmup_scheduler, cosine_scheduler],
@@ -547,7 +577,9 @@ def init_wandb_run(args, run_type, model_path=None, extra_config=None):
     try:
         import wandb
     except ImportError as exc:
-        raise ImportError("wandb is not installed. Install it first to run this project.") from exc
+        raise ImportError(
+            "wandb is not installed. Install it first to run this project."
+        ) from exc
 
     config = {
         "mode": args.mode,
@@ -620,7 +652,9 @@ def train(args, model_path, wandb_run=None):
     model = build_model(args, pretrained=not args.resume_train)
     if args.resume_train:
         if not model_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found for resume training: {model_path}")
+            raise FileNotFoundError(
+                f"Checkpoint not found for resume training: {model_path}"
+            )
         load_model_weights(model, model_path, args.device, args.model)
         print(f"Resumed training from {model_path}")
 
@@ -636,9 +670,13 @@ def train(args, model_path, wandb_run=None):
 
     train_dataset = ImageFolder(
         args.data_dir / "train",
-        transform=build_train_transform_with_randaugment(args.image_size, args.randaugment_magnitude),
+        transform=build_train_transform_with_randaugment(
+            args.image_size, args.randaugment_magnitude
+        ),
     )
-    val_dataset = ImageFolder(args.data_dir / "val", transform=build_eval_transform(args.image_size))
+    val_dataset = ImageFolder(
+        args.data_dir / "val", transform=build_eval_transform(args.image_size)
+    )
     train_dataloader = build_dataloader(
         train_dataset,
         batch_size=args.batch_size,
@@ -683,7 +721,9 @@ def test(args, model_path, wandb_run=None):
     model = build_model(args, pretrained=False)
     load_model_weights(model, model_path, args.device, args.model)
     train_dataset = ImageFolder(args.data_dir / "train")
-    test_dataset = TestDataset(root=args.data_dir / "test", transform=build_eval_transform(args.image_size))
+    test_dataset = TestDataset(
+        root=args.data_dir / "test", transform=build_eval_transform(args.image_size)
+    )
     test_dataloader = build_dataloader(
         test_dataset,
         batch_size=args.batch_size,
@@ -717,7 +757,9 @@ def ensemble_test(args, wandb_run=None):
         resolved_path = member["model_path"].resolve()
         image_size = member["image_size"]
         if image_size not in eval_dataloaders:
-            eval_dataset = build_eval_dataset(args.data_dir, image_size, split=args.ensemble_split)
+            eval_dataset = build_eval_dataset(
+                args.data_dir, image_size, split=args.ensemble_split
+            )
             eval_dataloaders[image_size] = build_dataloader(
                 eval_dataset,
                 batch_size=args.batch_size,
@@ -756,18 +798,29 @@ def ensemble_test(args, wandb_run=None):
                 ensemble_logits = logits
             else:
                 if filenames != ensemble_filenames:
-                    raise ValueError("Ensemble dataloader order mismatch across models.")
+                    raise ValueError(
+                        "Ensemble dataloader order mismatch across models."
+                    )
                 ensemble_logits += logits
-        print(f"Loaded ensemble member: {model_name} from {resolved_path} | image_size={image_size}")
+        print(
+            f"Loaded ensemble member: {model_name} from {resolved_path} | image_size={image_size}"
+        )
 
     ensemble_logits /= len(selected_members)
     if args.ensemble_split == "val":
-        val_loss = torch.nn.functional.cross_entropy(ensemble_logits, ensemble_labels).item()
-        val_acc = (ensemble_logits.argmax(dim=1) == ensemble_labels).float().mean().item()
+        val_loss = torch.nn.functional.cross_entropy(
+            ensemble_logits, ensemble_labels
+        ).item()
+        val_acc = (
+            (ensemble_logits.argmax(dim=1) == ensemble_labels).float().mean().item()
+        )
         if wandb_run is not None:
             wandb_run.log({"ensemble/val_loss": val_loss, "ensemble/val_acc": val_acc})
             wandb_run.summary["ensemble_num_models"] = len(selected_members)
-        print(f"Ensemble validation - Loss: {val_loss:.4f}, Acc: {val_acc:.4%} " f"using {len(selected_members)} models.")
+        print(
+            f"Ensemble validation - Loss: {val_loss:.4f}, Acc: {val_acc:.4%} "
+            f"using {len(selected_members)} models."
+        )
         return
 
     pred_indices = torch.argmax(ensemble_logits, dim=1).tolist()
@@ -785,14 +838,19 @@ def ensemble_test(args, wandb_run=None):
     if wandb_run is not None:
         wandb_run.summary["prediction_output_path"] = str(args.output_path)
         wandb_run.summary["ensemble_num_models"] = len(selected_members)
-    print(f"Saved ensemble predictions to {args.output_path} " f"using {len(selected_members)} models.")
+    print(
+        f"Saved ensemble predictions to {args.output_path} "
+        f"using {len(selected_members)} models."
+    )
 
 
 def tune(args, model_path, wandb_run=None):
     try:
         import optuna
     except ImportError as exc:
-        raise ImportError("Optuna is not installed. Install it first to use mode=tune.") from exc
+        raise ImportError(
+            "Optuna is not installed. Install it first to use mode=tune."
+        ) from exc
 
     tune_dir = model_path.parent / "optuna_trials"
     tune_dir.mkdir(parents=True, exist_ok=True)
@@ -806,17 +864,25 @@ def tune(args, model_path, wandb_run=None):
         trial_args.lr = trial.suggest_float("lr", 1e-5, 5e-3, log=True)
         trial_args.batch_size = trial.suggest_categorical("batch_size", [256])
         trial_args.epochs = trial.suggest_int("epochs", 20, 30)
-        trial_args.weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
-        trial_args.backbone_lr_scale = trial.suggest_categorical("backbone_lr_scale", [0.01, 0.05, 0.1, 0.2])
+        trial_args.weight_decay = trial.suggest_float(
+            "weight_decay", 1e-6, 1e-2, log=True
+        )
+        trial_args.backbone_lr_scale = trial.suggest_categorical(
+            "backbone_lr_scale", [0.01, 0.05, 0.1, 0.2]
+        )
         trial_args.warmup_ratio = trial.suggest_float("warmup_ratio", 0.0, 0.2)
         trial_args.eta_min = trial.suggest_float("eta_min", 1e-7, 1e-5, log=True)
         trial_args.label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
-        trial_args.randaugment_magnitude = trial.suggest_int("randaugment_magnitude", 5, 15)
+        trial_args.randaugment_magnitude = trial.suggest_int(
+            "randaugment_magnitude", 5, 15
+        )
         trial_args.image_size = trial.suggest_categorical("image_size", [224, 256, 288])
 
         train_dataset = ImageFolder(
             trial_args.data_dir / "train",
-            transform=build_train_transform_with_randaugment(trial_args.image_size, trial_args.randaugment_magnitude),
+            transform=build_train_transform_with_randaugment(
+                trial_args.image_size, trial_args.randaugment_magnitude
+            ),
         )
         val_dataset = ImageFolder(
             trial_args.data_dir / "val",
@@ -831,7 +897,9 @@ def tune(args, model_path, wandb_run=None):
             trial_args.weight_decay,
             trial_args.backbone_lr_scale,
         )
-        scheduler = build_scheduler(optimizer, trial_args.epochs, trial_args.warmup_ratio, trial_args.eta_min)
+        scheduler = build_scheduler(
+            optimizer, trial_args.epochs, trial_args.warmup_ratio, trial_args.eta_min
+        )
         loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=trial_args.label_smoothing)
 
         train_dataloader = build_dataloader(
@@ -886,7 +954,9 @@ def tune(args, model_path, wandb_run=None):
     shutil.copy2(best_model_path, model_path)
     if wandb_run is not None:
         wandb_run.summary["optuna_best_val_acc"] = study.best_value
-        wandb_run.summary["optuna_best_epoch"] = study.best_trial.user_attrs["best_epoch"]
+        wandb_run.summary["optuna_best_epoch"] = study.best_trial.user_attrs[
+            "best_epoch"
+        ]
         wandb_run.summary["optuna_best_seed"] = study.best_trial.user_attrs["seed"]
         wandb_run.summary["saved_model_path"] = str(model_path)
         for key, value in study.best_params.items():
@@ -907,8 +977,14 @@ def main():
     args.output_path = args.output_path.resolve()
     args.wandb_tags = parse_wandb_tags(args.wandb_tags)
     if args.ensemble_model_paths is not None:
-        args.ensemble_model_paths = [path.resolve() for path in args.ensemble_model_paths]
-    model_path = args.model_path.resolve() if args.model_path is not None else (PROJECT_ROOT / "models" / f"{args.model}.pth").resolve()
+        args.ensemble_model_paths = [
+            path.resolve() for path in args.ensemble_model_paths
+        ]
+    model_path = (
+        args.model_path.resolve()
+        if args.model_path is not None
+        else (PROJECT_ROOT / "models" / f"{args.model}.pth").resolve()
+    )
 
     set_seed(args.seed)
 
@@ -921,16 +997,30 @@ def main():
                 train_run.finish()
     if args.mode in {"test", "all"}:
         extra_config = None
-        if args.ensemble_models or args.ensemble_model_paths or args.ensemble_top_k is not None:
+        if (
+            args.ensemble_models
+            or args.ensemble_model_paths
+            or args.ensemble_top_k is not None
+        ):
             extra_config = {
                 "ensemble_models": args.ensemble_models,
-                "ensemble_model_paths": [str(path) for path in args.ensemble_model_paths] if args.ensemble_model_paths else None,
+                "ensemble_model_paths": (
+                    [str(path) for path in args.ensemble_model_paths]
+                    if args.ensemble_model_paths
+                    else None
+                ),
                 "ensemble_top_k": args.ensemble_top_k,
                 "ensemble_candidate_glob": args.ensemble_candidate_glob,
                 "ensemble_split": args.ensemble_split,
             }
-        test_run = init_wandb_run(args, "test", model_path=model_path, extra_config=extra_config)
-        if args.ensemble_models or args.ensemble_model_paths or args.ensemble_top_k is not None:
+        test_run = init_wandb_run(
+            args, "test", model_path=model_path, extra_config=extra_config
+        )
+        if (
+            args.ensemble_models
+            or args.ensemble_model_paths
+            or args.ensemble_top_k is not None
+        ):
             try:
                 ensemble_test(args, wandb_run=test_run)
             finally:

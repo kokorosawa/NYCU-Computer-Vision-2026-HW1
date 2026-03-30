@@ -89,9 +89,8 @@ class Trainer:
         if self.mix_prob <= 0.0 or random.random() >= self.mix_prob:
             return images, labels, labels, 1.0
 
-        apply_cutmix = (
-            self.cutmix_alpha > 0.0
-            and (self.mixup_alpha <= 0.0 or random.random() < 0.5)
+        apply_cutmix = self.cutmix_alpha > 0.0 and (
+            self.mixup_alpha <= 0.0 or random.random() < 0.5
         )
         indices = torch.randperm(images.size(0), device=images.device)
         shuffled_images = images[indices]
@@ -155,9 +154,10 @@ class Trainer:
             self.scaler.update()
 
             preds = torch.argmax(outputs, dim=1)
-            batch_correct = lam * (preds == labels_a).sum().item() + (1.0 - lam) * (
-                preds == labels_b
-            ).sum().item()
+            batch_correct = (
+                lam * (preds == labels_a).sum().item()
+                + (1.0 - lam) * (preds == labels_b).sum().item()
+            )
             total_correct += batch_correct
             total_samples += labels_a.size(0)
             total_loss += loss.item()
