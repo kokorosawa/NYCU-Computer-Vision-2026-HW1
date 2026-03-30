@@ -1,47 +1,123 @@
 \documentclass[11pt]{article}
 
-\usepackage[a4paper,top=0.3in,bottom=1in,left=0.3in,right=0.3in]{geometry}
+\usepackage[a4paper,top=0.65in,bottom=0.8in,left=0.7in,right=0.7in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
-\usepackage{tikz-cd}
-\usepackage{multicol}
-\usepackage{tikz}
-\usepackage{setspace}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
 \usepackage{fontspec}
 \usepackage{xeCJK}
-\usepackage{mathtools}
-\usepackage{algorithm}
-\usepackage{algpseudocode}
-
-\pagestyle{empty}
 
 \setmainfont{Times New Roman}
 \setCJKmainfont{Microsoft JhengHei}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45em}
+
+\title{\vspace{-1.2cm}DLCV Homework 1 Report\\Image Classification with ResNet Variants, gMLP Head, and Ensemble Inference}
+\author{吳念澤\\\\314581007}
+\date{March 2026}
 
 \begin{document}
+\maketitle
+\vspace{-1.2em}
 
-\noindent
-\begin{minipage}[t]{0.72\textwidth}
-  \raggedright
-  \Large\bfseries Reinforcement Learning
-\end{minipage}%
-\begin{minipage}[t]{0.27\textwidth}
-  \raggedleft
-  \Large March. 2026
-\end{minipage}
+\section{Introduction}
+This homework targets a 100-class image classification problem. My goal was not only to fine-tune a pretrained backbone, but also to improve representation quality and generalization by modifying the model architecture and the training pipeline. Starting from torchvision pretrained ResNet models, I built a unified training and inference framework that supports multiple backbones, attention-enhanced residual blocks, a gMLP-based classifier head, Optuna hyperparameter search, and checkpoint ensemble inference.
 
-\vspace{0.1em}
-\hrule
+The core idea of my method is to combine strong transfer learning from ImageNet-pretrained CNN backbones with aggressive but stable regularization. Specifically, I used data augmentation, label smoothing, MixUp/CutMix, learning-rate warmup followed by cosine decay, and early stopping to stabilize training. On top of that, I explored architectural changes, including ECA, SE, and a gMLP head on ResNet-50. Finally, I used multi-checkpoint ensemble inference to further improve robustness.
 
-\vspace{0.95cm}
+\section{Method}
+\subsection{Data preprocessing}
+The dataset is organized into \texttt{train/}, \texttt{val/}, and \texttt{test/}. Training images are loaded with \texttt{ImageFolder}, while the test split is wrapped by a custom dataset that returns both the image tensor and filename for CSV submission.
 
-\begin{center}
-  {\fontsize{28}{34}\selectfont\bfseries Reinforcement Learning\par}
-  \vspace{0.65cm}
-  {\fontsize{18}{24}\selectfont Homework 1\par}
-  \vspace{0.35cm}
-  {\Large 吳念澤 \par}
-  \vspace{0.2cm}
-  {\Large\texttt{314581007}\par}
-\end{center}
+My training transform contains the following steps:
+\begin{itemize}[leftmargin=1.5em]
+\item \texttt{RandomResizedCrop} with scale range \texttt{(0.7, 1.0)}
+\item random horizontal flip
+\item \texttt{RandAugment} with two operations and tunable magnitude
+\item \texttt{RandomAffine} with rotation, translation, and scale jitter
+\item ImageNet normalization
+\item \texttt{RandomErasing} for additional regularization
+\end{itemize}
+
+For validation and testing, I used a deterministic pipeline: resize, center crop, tensor conversion, and ImageNet normalization. This keeps the evaluation protocol stable and comparable across models. During inference, the framework also supports horizontal-flip test-time augmentation (TTA).
+
+\subsection{Model architecture}
+The base models are pretrained \texttt{resnet18}, \texttt{resnet34}, \texttt{resnet50}, and \texttt{resnext50\_32x4d}. For the standard classifier, I replaced the original fully connected layer with a two-layer head:
+\[
+\text{Linear} \rightarrow \text{BatchNorm} \rightarrow \text{ReLU} \rightarrow \text{Dropout} \rightarrow \text{Linear}.
+\]
+This gives the model more capacity for the target 100-way classification task while keeping the backbone initialization from ImageNet.
+
+I further implemented three architectural variants:
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{ECA-ResNet}: each residual block is augmented with Efficient Channel Attention, which applies lightweight local cross-channel interaction after global average pooling.
+\item \textbf{SE-ResNet}: each residual block is augmented with a squeeze-and-excitation module that explicitly reweights feature channels.
+\item \textbf{gMLP-ResNet50}: after the ResNet-50 feature extractor, spatial tokens are flattened and passed through two gMLP blocks with a spatial gating unit, followed by token averaging and a final linear classifier.
+\end{itemize}
+
+Among these options, \texttt{gmlp\_resnet50} was used as the main model for hyperparameter search and the final ensemble because it provides a stronger classification head without discarding the convolutional inductive bias of ResNet.
+
+\subsection{Training strategy and hyperparameters}
+The training code supports mixed precision, differential learning rates for backbone and head, and either AdamW or SGD. The default setting uses AdamW with batch size 256 and 20 epochs. The loss function is cross-entropy with label smoothing.
+
+To improve generalization, I enabled both MixUp and CutMix with stochastic selection during training. I also used warmup followed by cosine annealing, which prevents unstable updates at the start of fine-tuning and gradually reduces the learning rate near convergence. Early stopping selects the checkpoint with the best validation accuracy, using validation loss as a tie breaker.
+
+For Optuna tuning, the searched hyperparameters include:
+\begin{itemize}[leftmargin=1.5em]
+\item optimizer: AdamW or SGD
+\item learning rate and weight decay
+\item backbone learning-rate scale
+\item dropout
+\item label smoothing
+\item warmup ratio and minimum learning rate
+\item RandAugment magnitude
+\item image size in \{224, 256, 288\}
+\item training epochs in \{20, \dots, 30\}
+\end{itemize}
+
+\subsection{Additional experiment: checkpoint ensemble}
+Besides architecture changes, I conducted an additional experiment using a top-$k$ ensemble over multiple Optuna checkpoints. This is not simple hyperparameter tuning because the final predictor is formed by averaging logits from several independently trained models/checkpoints.
+
+\textbf{Hypothesis.} Different Optuna trials converge to slightly different local optima. Even when their validation accuracies are similar, their prediction errors are not identical. Averaging their logits should reduce variance and improve overall robustness.
+
+\textbf{Why it may work.} The candidate checkpoints differ in image size, dropout, optimizer choice, regularization strength, and training trajectory. This diversity is useful for an ensemble because correlated mistakes are reduced.
+
+\textbf{Implementation.} The code automatically scores candidate checkpoints on the validation set, selects the top-$k$ members, rebuilds the correct dataloader for each image size if needed, and averages logits before producing the final prediction.
+
+\section{Results}
+The strongest single checkpoint obtained from the Optuna search reached approximately \textbf{92.33\%} validation accuracy. The final top-5 checkpoint ensemble reached approximately \textbf{93.00\%} validation accuracy. This shows that the ensemble produced a measurable gain over the best single model.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lc}
+\toprule
+Setting & Validation accuracy \\
+\midrule
+Best single Optuna trial & 92.33\% \\
+Top-5 checkpoint ensemble & 93.00\% \\
+\bottomrule
+\end{tabular}
+\caption{Best validated results recorded in the repository.}
+\end{table}
+
+These results support two conclusions. First, the full training recipe, including augmentation, label smoothing, mixed-sample regularization, and cosine scheduling, is strong enough to produce a competitive single model. Second, combining diverse checkpoints is still beneficial after tuning, which suggests that model diversity matters in this task.
+
+The additional ensemble experiment confirms the original hypothesis: averaging several strong but slightly different checkpoints improves stability and gives a higher validation score than relying on one model alone. This also implies that future work could explore stronger diversity sources, such as combining different backbone families instead of only multiple variants of the same main architecture.
+
+\section{References}
+\begin{enumerate}[leftmargin=1.5em]
+\item Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. ``Deep Residual Learning for Image Recognition.'' In \emph{CVPR}, 2016.
+\item Saining Xie, Ross Girshick, Piotr Doll\'ar, Zhuowen Tu, and Kaiming He. ``Aggregated Residual Transformations for Deep Neural Networks.'' In \emph{CVPR}, 2017.
+\item Qilong Wang, Banggu Wu, Pengfei Zhu, Peihua Li, Wangmeng Zuo, and Qinghua Hu. ``ECA-Net: Efficient Channel Attention for Deep Convolutional Neural Networks.'' In \emph{CVPR}, 2020.
+\item Jie Hu, Li Shen, and Gang Sun. ``Squeeze-and-Excitation Networks.'' In \emph{CVPR}, 2018.
+\item Hanxiao Liu, Zihang Dai, David R. So, and Quoc V. Le. ``Pay Attention to MLPs.'' In \emph{NeurIPS}, 2021.
+\item Hongyi Zhang, Moustapha Ciss\'e, Yann N. Dauphin, and David Lopez-Paz. ``mixup: Beyond Empirical Risk Minimization.'' In \emph{ICLR}, 2018.
+\item Sangdoo Yun, Dongyoon Han, Seong Joon Oh, Sanghyuk Chun, Junsuk Choe, and Youngjoon Yoo. ``CutMix: Regularization Strategy to Train Strong Classifiers with Localizable Features.'' In \emph{ICCV}, 2019.
+\item Ekin D. Cubuk, Barret Zoph, Jonathon Shlens, and Quoc V. Le. ``RandAugment: Practical Automated Data Augmentation with a Reduced Search Space.'' In \emph{CVPR Workshops}, 2020.
+\item Akiba Takuya et al. ``Optuna: A Next-generation Hyperparameter Optimization Framework.'' In \emph{KDD}, 2019.
+\item Torchvision model zoo and PyTorch documentation: \url{https://pytorch.org/vision/stable/models.html}
+\end{enumerate}
+ 
 \end{document}
